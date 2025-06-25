@@ -273,7 +273,7 @@ echo ""
 echo "Attempting to create database: $db_name"
 
 if echo "$mysql_admin_password" | mysql -u "$mysql_admin_user" -p"$mysql_admin_password" -e "CREATE DATABASE IF NOT EXISTS \`$db_name\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"; then
-    echo "Database \`$db_name\` created successfully."
+    echo "✅ Database \`$db_name\` created successfully."
 else
     echo "Error: Database creation failed. Please check your MySQL username/password or ensure the user '$mysql_admin_user' has necessary privileges."
     exit 1
