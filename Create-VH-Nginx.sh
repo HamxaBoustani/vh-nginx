@@ -102,6 +102,7 @@ if [[ "$php_fpm_version_input" != "php" ]]; then
 fi
 
 php_fpm_full_path="/var/run/php/${php_fpm_socket}"
+
 echo "-------------------------------------------------------"
 echo "✅ Using PHP-FPM socket: $php_fpm_full_path"
 
@@ -144,93 +145,131 @@ echo "✅ Directories created successfully."
 echo "======================================================="
 echo "Creating Nginx configuration file in $nginx_conf..."
 cat > "$nginx_conf" <<EOF
-# Main WordPress site - HTTPS
+# Disable version information in error pages for security
+#server_tokens off;
+
+#
+# Virtual Host configuration for $domain
+#
 server {
+    # Listen on HTTPS with HTTP/2 support
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
 
+    # Define domain names handled by this server block
     server_name $domain www.$domain;
 
-    # Paths to certificate files. Ensure these snippets exist in /etc/nginx/snippets/
+    # Include SSL certificate and security parameters
     include snippets/self-signed.conf;
     include snippets/ssl-params.conf;
 
+    # Enforce HTTPS with HSTS header (prevents downgrade attacks)
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+
+    # Document root
     root $root_dir;
+
+    # Default index files
     index index.html index.php;
 
+    # Access and error logs
     access_log $logs_dir/$domain.access.log;
     error_log $logs_dir/$domain.error.log;
 
+    # Main request handler
     location / {
-        try_files \$uri \$uri/ /index.php?\$args;
+        try_files $uri $uri/ /index.php?$args;
     }
 
-    location ~ \.php\$ {
+    # Block access to sensitive files for security
+    location ~* /(?:uploads/)?(\.ht|\.git|\.env|wp-config\.php) {
+        deny all;
+    }
+
+    # PHP processing
+    location ~ \.php$ {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:$php_fpm_full_path;
+
+        # Ensure correct path is passed to PHP
+        #fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        #include fastcgi_params;
     }
 
+    # Allow large file uploads (up to 1000MB)
     client_max_body_size 1000M;
 }
 
-# Uploads subdomain - HTTPS
+#
+# Virtual Host for uploads subdomain
+#
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
 
     server_name uploads.$domain;
 
-    # Paths to certificate files. Ensure these snippets exist in /etc/nginx/snippets/
     include snippets/self-signed.conf;
     include snippets/ssl-params.conf;
 
-    root $root_dir/uploads; # Root specifically points to the uploads directory
-    index index.html index.php; # Potentially remove index.php if only static files
+    # HSTS enforcement
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+
+    # Serve files from uploads directory
+    root $root_dir/uploads;
+    index index.html index.php;
 
     access_log $logs_dir/uploads.$domain.access.log;
     error_log $logs_dir/uploads.$domain.error.log;
 
     location / {
-        try_files \$uri \$uri/ /index.php?\$args; # Keep for consistency, but often static for uploads
+        try_files $uri $uri/ /index.php?$args;
     }
 
-    # IMPORTANT SECURITY MEASURE: Deny PHP execution in uploads directory
-    location ~ \.php\$ {
-        # Return 404 Not Found to prevent execution of malicious PHP files
-        return 404; 
-        # Alternatively, for stricter denial: deny all;
-        # For logging such attempts: error_log /var/www/$domain/logs/uploads_php_attempt.error.log;
+    # Block sensitive files
+    location ~* /(?:uploads/)?(\.ht|\.git|\.env|wp-config\.php) {
+        deny all;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:$php_fpm_full_path;
+        #fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        #include fastcgi_params;
     }
 
     client_max_body_size 1000M;
 }
 
-# Redirect HTTP to HTTPS for main domain
+#
+# Redirect all HTTP traffic to HTTPS for main domain
+#
 server {
     listen 80;
     listen [::]:80;
 
     server_name $domain www.$domain;
 
-    return 301 https://\$host\$request_uri;
+    # Permanent redirect to HTTPS
+    return 301 https://$domain;
 
-    # Optional: Logging for debugging purposes
-    access_log $logs_dir/$domain.http_to_https_redirect.access.log;
-    error_log $logs_dir/$domain.http_to_https_redirect.error.log;
+    access_log /var/log/nginx/redirect.to.https.access.log;
+    error_log /var/log/nginx/redirect.to.https.error.log;
 }
 
-# Redirect HTTP to HTTPS for uploads subdomain
+#
+# Redirect all HTTP traffic to HTTPS for uploads subdomain
+#
 server {
     listen 80;
     listen [::]:80;
 
     server_name uploads.$domain;
 
-    return 301 https://\$host\$request_uri;
+    return 301 https://$domain;
 
-    # Optional: Logging for debugging purposes
-    access_log $logs_dir/uploads.$domain.http_to_https_redirect.access.log;
-    error_log $logs_dir/uploads.$domain.http_to_https_redirect.error.log;
+    access_log /var/log/nginx/uploads.redirect.to.https.access.log;
+    error_log /var/log/nginx/uploads.redirect.to.https.error.log;
 }
 EOF
 echo "✅ Nginx configuration file created successfully."
